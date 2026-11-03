@@ -1,0 +1,14 @@
+services:
+  - type: cron
+    name: typeiran-cloud-attendance
+    runtime: node
+    plan: starter
+    region: frankfurt
+    schedule: "*/30 * * * *"
+    buildCommand: npm install && npx playwright install --with-deps chromium
+    startCommand: npm run run
+    envVars:
+      - key: TYPEIRAN_STORAGE_STATE
+        sync: false
+      - key: ACTION_TIMEOUT_MS
+        value: "15000"
