@@ -15,7 +15,7 @@ if (!API_KEY) {
 }
 
 let sessionId = null;
-let protocolVersion = '2025-03-26';
+let protocolVersion = null;
 let requestId = 0;
 
 function parseSse(text) {
