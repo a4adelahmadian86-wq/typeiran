@@ -1,30 +1,29 @@
 # TypeIran Cloud Attendance
 
-A scheduled Playwright task for TypeIran. It is designed to run from Render Cron and does not depend on a local computer.
+A cloud-only scheduled automation. Render Cron starts the job every 30 minutes (UTC); the job calls the TinyFish hosted MCP API and reuses the saved TinyFish Browser Context Profile. No local computer, local browser, Playwright storage-state export, or TypeIran password is required.
 
-## Safety contract
+## Exact safety rules
 
-- Checks the worker page for exactly one visible, enabled element whose exact attribute is `aria-label="اعلام حضور"`.
-- Only if no eligible attendance element exists, checks the online projects page for exactly one visible, enabled button whose exact accessible name is `دریافت نوبت`.
-- Stops on multiple matches, login redirects, unstable target state, unexpected origin, or a visible modal.
-- Does not select or interact with `حذف نوبت` or `بررسی نوبت`.
-- Does not accept, dismiss, or close JavaScript dialogs.
-- No fuzzy matching, coordinates, or alternate selectors are used.
-- Logs each run as JSON. It never logs cookies or the storage-state secret.
+- Inspect the worker page first.
+- Click exactly one visible, enabled element with exact `aria-label="اعلام حضور"`, if present.
+- Only if that target is absent, inspect the online page and click exactly one visible, enabled button with exact accessible name `دریافت نوبت`.
+- Never click, focus, hover, or otherwise interact with `حذف نوبت` or `بررسی نوبت`.
+- Never accept, reject, close, or dismiss dialogs, modals, or popups.
+- Stop without clicking when authentication is invalid, targets are ambiguous, or state is unclear.
+- No fuzzy matching, coordinates, or fallback selectors.
 
-## Required Render secret
+## Render environment
 
-Set `TYPEIRAN_STORAGE_STATE` as a **secret environment variable** in Render. Its value must be the complete Playwright storage-state JSON for an authenticated TypeIran session (cookies and local storage). Never commit it to GitHub and never send it in chat.
+Set `TINYFISH_API_KEY` as a Render secret. Do not commit it to GitHub or send it in chat.
 
-The repository does not contain credentials or session data.
+`TINYFISH_PROFILE_ID` is already configured in `render.yaml` for the saved profile `prof_9a2ee95796624b37`.
 
-## Render Cron
+## Schedule
 
-- Runtime: Node
-- Build: `npm ci && npx playwright install --with-deps chromium`
-- Start: `npm run run`
-- Schedule: `*/30 * * * *` (UTC)
+`*/30 * * * *` — every 30 minutes, evaluated in UTC by Render.
 
-## Important limitations
+## API behavior
 
-A click is not a guarantee that TypeIran accepted the action. The logs record the click attempt and a limited post-click DOM check. If TypeIran changes its interface or presents a confirmation dialog, the runner stops without interacting with that dialog. Verify the first live run in Render logs before relying on the schedule.
+The runner uses the official TinyFish hosted MCP endpoint `https://agent.tinyfish.ai/mcp`, authenticates with `X-API-Key`, initializes an MCP session, starts one `run_web_automation` call with the saved profile, and waits for its terminal result. It logs only a concise outcome and run ID; it does not log the API key or browser session data.
+
+A successful deployment is not considered verified until the Render build succeeds and a scheduled/manual run completes with a confirmed TypeIran action in its logs.
