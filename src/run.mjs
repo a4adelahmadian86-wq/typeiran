@@ -1,125 +1,185 @@
-import { chromium } from 'playwright';
-
-const BASE = 'https://typeiran.com';
-const WORKER_URL = BASE + '/projects/online/worker';
-const ONLINE_URL = BASE + '/projects/online';
-const TIMEOUT = Number(process.env.ACTION_TIMEOUT_MS || 15000);
+const ENDPOINT = 'https://agent.tinyfish.ai/mcp';
+const API_KEY = process.env.TINYFISH_API_KEY;
+const PROFILE_ID = process.env.TINYFISH_PROFILE_ID || 'prof_9a2ee95796624b37';
+const MAX_POLLS = Number(process.env.MAX_POLLS || 8);
 
 const log = (event, details = {}) => console.log(JSON.stringify({
-  timestamp: new Date().toISOString(), event, ...details
+  timestamp: new Date().toISOString(),
+  event,
+  ...details
 }));
 
-function normalize(value) {
-  return String(value ?? '').replace(/\\s+/g, ' ').trim();
+if (!API_KEY) {
+  log('CONFIGURATION_REQUIRED', { code: 'MISSING_TINYFISH_API_KEY' });
+  process.exit(2);
 }
 
-async function visibleEnabled(locator) {
-  const matches = [];
-  const count = await locator.count();
-  for (let i = 0; i < count; i++) {
-    const item = locator.nth(i);
-    try {
-      if (await item.isVisible() && await item.isEnabled()) matches.push(item);
-    } catch {
-      // A detached or unstable target is not safe to click.
-      throw new Error('TARGET_STATE_UNSTABLE');
+let sessionId = null;
+let protocolVersion = '2025-03-26';
+let requestId = 0;
+
+function parseSse(text) {
+  const messages = [];
+  for (const block of text.split(/\r?\n\r?\n/)) {
+    const data = block.split(/\r?\n/)
+      .filter(line => line.startsWith('data:'))
+      .map(line => line.slice(5).trim())
+      .join('\n');
+    if (!data || data === '[DONE]') continue;
+    try { messages.push(JSON.parse(data)); } catch {}
+  }
+  return messages;
+}
+
+async function rpc(method, params = {}, { notification = false } = {}) {
+  const headers = {
+    'content-type': 'application/json',
+    'accept': 'application/json, text/event-stream',
+    'X-API-Key': API_KEY
+  };
+  if (sessionId) headers['Mcp-Session-Id'] = sessionId;
+  if (protocolVersion) headers['MCP-Protocol-Version'] = protocolVersion;
+
+  const body = {
+    jsonrpc: '2.0',
+    method,
+    params
+  };
+  if (!notification) body.id = ++requestId;
+
+  const response = await fetch(ENDPOINT, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(65000)
+  });
+
+  sessionId = response.headers.get('mcp-session-id') || sessionId;
+  const raw = await response.text();
+
+  if (!response.ok) {
+    throw new Error('TINYFISH_HTTP_' + response.status + ':' + raw.slice(0, 500));
+  }
+  if (notification || response.status === 202 || !raw.trim()) return null;
+
+  const contentType = response.headers.get('content-type') || '';
+  let messages = [];
+  if (contentType.includes('text/event-stream')) messages = parseSse(raw);
+  else {
+    try { messages = [JSON.parse(raw)]; } catch {
+      throw new Error('INVALID_MCP_RESPONSE');
     }
   }
-  return matches;
+
+  const message = messages.find(item => item && (notification || item.id === body.id)) || messages.at(-1);
+  if (!message) throw new Error('EMPTY_MCP_RESPONSE');
+  if (message.error) throw new Error('MCP_RPC_ERROR:' + JSON.stringify(message.error).slice(0, 500));
+  return message.result ?? message;
 }
 
-async function hasBlockingDialog(page) {
-  const modal = page.locator('[role="dialog"], [aria-modal="true"], dialog:visible');
-  return (await modal.count()) > 0;
-}
-
-async function assertAuthenticated(page) {
-  const url = page.url();
-  if (/\/login(?:[/?#]|$)/i.test(url)) throw new Error('LOGIN_REQUIRED');
-  if (!url.startsWith(BASE)) throw new Error('UNEXPECTED_ORIGIN');
-}
-
-async function clickExactTarget(page, kind) {
-  if (await hasBlockingDialog(page)) throw new Error('DIALOG_PRESENT');
-
-  if (kind === 'attendance') {
-    const matches = await visibleEnabled(page.locator('[aria-label="اعلام حضور"]'));
-    if (matches.length > 1) throw new Error('AMBIGUOUS_ATTENDANCE_TARGET');
-    if (matches.length === 0) return { found: false };
-    await matches[0].click({ timeout: TIMEOUT });
-    return { found: true, target: 'attendance', url: page.url() };
+async function callTool(name, args) {
+  const result = await rpc('tools/call', { name, arguments: args });
+  if (result?.isError) {
+    const message = (result.content || []).map(x => x.text || '').join(' ');
+    throw new Error('TINYFISH_TOOL_ERROR:' + message.slice(0, 700));
   }
+  return result;
+}
 
-  // Exact button role/name only. No fuzzy text, coordinates, or fallback selectors.
-  const allButtons = page.getByRole('button', { name: 'دریافت نوبت', exact: true });
-  const matches = await visibleEnabled(allButtons);
-  if (matches.length > 1) throw new Error('AMBIGUOUS_APPOINTMENT_TARGET');
-  if (matches.length === 0) return { found: false };
-  await matches[0].click({ timeout: TIMEOUT });
-  return { found: true, target: 'appointment', url: page.url() };
+function contentText(result) {
+  if (typeof result === 'string') return result;
+  if (result?.structuredContent) return JSON.stringify(result.structuredContent);
+  return (result?.content || []).map(item => item.text || '').join('\n');
+}
+
+function extractObject(result) {
+  if (result?.structuredContent) return result.structuredContent;
+  const text = contentText(result);
+  try { return JSON.parse(text); } catch {}
+  const start = text.indexOf('{');
+  const end = text.lastIndexOf('}');
+  if (start >= 0 && end > start) {
+    try { return JSON.parse(text.slice(start, end + 1)); } catch {}
+  }
+  return { raw: text };
+}
+
+function summarize(text) {
+  const value = String(text || '');
+  if (/login_required|login page|sign.?in required|not authenticated/i.test(value)) return 'AUTH_REQUIRED';
+  if (/ambiguous|multiple matches|target.*unclear/i.test(value)) return 'SAFE_STOP_AMBIGUOUS_TARGET';
+  if (/dialog|modal|popup/i.test(value)) return 'SAFE_STOP_DIALOG_PRESENT_OR_DETECTED';
+  if (/successfully completed|successfully registered|attendance.*registered|clicked it exactly once/i.test(value)) return 'ACTION_COMPLETED';
+  if (/no eligible target|no.*target.*found/i.test(value)) return 'NO_ELIGIBLE_TARGET';
+  return 'RUN_FINISHED_REVIEW_REQUIRED';
 }
 
 async function main() {
-  const rawState = process.env.TYPEIRAN_STORAGE_STATE;
-  if (!rawState) throw new Error('MISSING_TYPEIRAN_STORAGE_STATE');
+  const init = await rpc('initialize', {
+    protocolVersion: '2025-03-26',
+    capabilities: {},
+    clientInfo: { name: 'typeiran-cloud-cron', version: '1.1.0' }
+  });
+  if (init?.protocolVersion) protocolVersion = init.protocolVersion;
+  await rpc('notifications/initialized', {}, { notification: true });
 
-  let storageState;
-  try { storageState = JSON.parse(rawState); }
-  catch { throw new Error('INVALID_TYPEIRAN_STORAGE_STATE_JSON'); }
+  log('RUN_STARTED', { profileId: PROFILE_ID });
 
-  const browser = await chromium.launch({ headless: true });
-  let context;
-  try {
-    context = await browser.newContext({ storageState });
-    const page = await context.newPage();
-    page.setDefaultTimeout(TIMEOUT);
+  const goal = [
+    'Perform one TypeIran attendance/appointment cycle using this saved authenticated browser profile.',
+    'First inspect https://typeiran.com/projects/online/worker.',
+    'If and only if exactly one visible and enabled element has the exact aria-label "اعلام حضور", click it exactly once and verify the resulting state.',
+    'Only if there is no such attendance element, inspect https://typeiran.com/projects/online. If and only if exactly one visible and enabled button has the exact normalized accessible name "دریافت نوبت", click it exactly once and verify the resulting state.',
+    'Never click, focus, hover, or otherwise interact with "حذف نوبت" or "بررسی نوبت".',
+    'Never interact with, accept, reject, close, or dismiss any dialog, modal, or popup. If one is present, stop without clicking anything.',
+    'If login is invalid, the target is ambiguous, the exact target is not unique, or state is unclear, stop without clicking.',
+    'Do not use fuzzy matching, coordinates, or alternative controls. This is one execution only.'
+  ].join(' ');
 
-    // Do not accept, dismiss, or otherwise handle JavaScript dialogs.
-    let dialogObserved = false;
-    page.on('dialog', () => { dialogObserved = true; });
+  const started = await callTool('run_web_automation', {
+    url: 'https://typeiran.com/projects/online/worker',
+    goal,
+    use_profile: true,
+    profile_id: PROFILE_ID,
+    capture_config: { elements: true, snapshots: false, screenshots: false, recording: false, html: false }
+  });
 
-    await page.goto(WORKER_URL, { waitUntil: 'domcontentloaded', timeout: 45000 });
-    await assertAuthenticated(page);
-    if (dialogObserved) throw new Error('DIALOG_PRESENT');
+  const startData = extractObject(started);
+  const runId = startData.runId || startData.run_id || startData.structuredContent?.runId;
+  if (!runId) {
+    log('START_RESPONSE_UNCLEAR', { summary: summarize(contentText(started)) });
+    process.exitCode = 1;
+    return;
+  }
 
-    const attendance = await clickExactTarget(page, 'attendance');
-    if (attendance.found) {
-      log('ACTION_CLICKED', attendance);
-      await page.waitForTimeout(1500);
-      if (dialogObserved) {
-        log('POST_CLICK_DIALOG_UNTOUCHED', { target: 'attendance' });
-        return;
-      }
-      const stillVisible = await page.locator('[aria-label="اعلام حضور"]').count();
-      log('POST_CLICK_CHECK', { target: 'attendance', matchingElementsAfterClick: stillVisible });
-      return;
-    }
+  log('BROWSER_RUN_QUEUED', { runId });
+  let finalData = null;
+  for (let i = 0; i < MAX_POLLS; i++) {
+    const waited = await callTool('wait_for_run', { run_id: runId });
+    finalData = extractObject(waited);
+    const status = String(finalData.status || '').toLowerCase();
+    if (['completed', 'failed', 'cancelled'].includes(status)) break;
+    log('BROWSER_RUN_PENDING', { poll: i + 1 });
+  }
 
-    await page.goto(ONLINE_URL, { waitUntil: 'domcontentloaded', timeout: 45000 });
-    await assertAuthenticated(page);
-    if (dialogObserved || await hasBlockingDialog(page)) throw new Error('DIALOG_PRESENT');
+  if (!finalData) throw new Error('MISSING_FINAL_RESULT');
+  const resultText = finalData.result?.result || finalData.result?.error || finalData.error || contentText(finalData);
+  const outcome = summarize(typeof resultText === 'string' ? resultText : JSON.stringify(resultText));
+  log('RUN_FINISHED', {
+    status: finalData.status || 'unknown',
+    outcome,
+    runId
+  });
 
-    const appointment = await clickExactTarget(page, 'appointment');
-    if (!appointment.found) {
-      log('NO_ELIGIBLE_TARGET', { checked: [WORKER_URL, ONLINE_URL] });
-      return;
-    }
-
-    log('ACTION_CLICKED', appointment);
-    await page.waitForTimeout(1500);
-    if (dialogObserved) {
-      log('POST_CLICK_DIALOG_UNTOUCHED', { target: 'appointment' });
-      return;
-    }
-    const remaining = await page.getByRole('button', { name: 'دریافت نوبت', exact: true }).count();
-    log('POST_CLICK_CHECK', { target: 'appointment', matchingButtonsAfterClick: remaining });
-  } finally {
-    if (context) await context.close();
-    await browser.close();
+  if (finalData.status && !['completed'].includes(String(finalData.status).toLowerCase())) {
+    process.exitCode = 1;
+  }
+  if (outcome === 'AUTH_REQUIRED' || outcome === 'SAFE_STOP_AMBIGUOUS_TARGET' || outcome === 'SAFE_STOP_DIALOG_PRESENT_OR_DETECTED' || outcome === 'RUN_FINISHED_REVIEW_REQUIRED') {
+    process.exitCode = 1;
   }
 }
 
 main().catch(error => {
-  log('SAFE_STOP', { code: error.message || 'UNKNOWN_ERROR' });
+  log('RUN_FAILED', { code: String(error.message || 'UNKNOWN_ERROR').slice(0, 700) });
   process.exitCode = 1;
 });
