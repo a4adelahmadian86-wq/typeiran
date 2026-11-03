@@ -5,10 +5,12 @@ services:
     plan: starter
     region: frankfurt
     schedule: "*/30 * * * *"
-    buildCommand: npm install && npx playwright install --with-deps chromium
+    buildCommand: npm install
     startCommand: npm run run
     envVars:
-      - key: TYPEIRAN_STORAGE_STATE
+      - key: TINYFISH_API_KEY
         sync: false
-      - key: ACTION_TIMEOUT_MS
-        value: "15000"
+      - key: TINYFISH_PROFILE_ID
+        value: prof_9a2ee95796624b37
+      - key: MAX_POLLS
+        value: "8"
