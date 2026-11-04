@@ -1,12 +1,16 @@
 {
   "name": "typeiran-cloud-attendance",
-  "version": "1.1.0",
+  "version": "2.0.0",
   "private": true,
   "type": "module",
   "scripts": {
-    "run": "node src/run.mjs"
+    "run": "node src/run.mjs",
+    "auth:setup": "node src/setup-auth.mjs"
   },
   "engines": {
     "node": ">=22"
+  },
+  "dependencies": {
+    "playwright": "1.58.2"
   }
 }
