@@ -16,7 +16,7 @@ In the repository, open **Settings → Secrets and variables → Actions → New
 
 Never commit the key to this repository or send it in chat. If an earlier key was pasted into a chat, revoke it and use a replacement.
 
-The workflow uses browser profile `prof_9a2ee95796624b37`. That profile must remain authenticated to TypeIran.
+Also add this repository Actions variable under **Settings → Secrets and variables → Actions → Variables**:\n\n- Name: `TYPEIRAN_AUTOMATION_ENABLED`\n- Value: `true`\n\nThe workflow intentionally skips all runs until this variable is set to `true`, preventing unexpected metered TinyFish usage. The workflow uses browser profile `prof_9a2ee95796624b37`. That profile must remain authenticated to TypeIran.
 
 ## Exact safety rules
 
