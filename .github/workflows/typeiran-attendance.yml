@@ -16,8 +16,8 @@ jobs:
   attendance:
     if: vars.TYPEIRAN_AUTOMATION_ENABLED == 'true'
     name: Run one safe attendance cycle
-    runs-on: ubuntu-slim
-    timeout-minutes: 6
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Check out main
         uses: actions/checkout@v4
@@ -28,10 +28,15 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
 
       - name: Run TypeIran automation
         env:
-          TINYFISH_API_KEY: ${{ secrets.TINYFISH_API_KEY }}
-          TINYFISH_PROFILE_ID: prof_9a2ee95796624b37
-          MAX_POLLS: "8"
+          TYPEIRAN_STORAGE_STATE_B64: ${{ secrets.TYPEIRAN_STORAGE_STATE_B64 }}
         run: npm run run
