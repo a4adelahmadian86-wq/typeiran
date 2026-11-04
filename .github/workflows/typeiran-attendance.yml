@@ -1,0 +1,36 @@
+name: TypeIran Cloud Attendance
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: typeiran-cloud-attendance
+  cancel-in-progress: false
+
+jobs:
+  attendance:
+    name: Run one safe attendance cycle
+    runs-on: ubuntu-slim
+    timeout-minutes: 6
+    steps:
+      - name: Check out main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Run TypeIran automation
+        env:
+          TINYFISH_API_KEY: ${{ secrets.TINYFISH_API_KEY }}
+          TINYFISH_PROFILE_ID: prof_9a2ee95796624b37
+          MAX_POLLS: "8"
+        run: npm run run
