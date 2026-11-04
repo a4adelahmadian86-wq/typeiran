@@ -1,1 +1,3 @@
 node_modules/\nplaywright/.cache/\n.env\n*.log\n
+typeiran-storage-state.json
+typeiran-storage-state-b64.txt
