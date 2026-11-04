@@ -1,35 +1,42 @@
 # TypeIran Cloud Attendance
 
-A cloud-only scheduled automation using GitHub Actions and the TinyFish hosted MCP browser runner. No local computer or local browser is required.
+This project runs a small Playwright browser task on GitHub-hosted runners. It does not use Render or TinyFish, so there is no Render cron charge or TinyFish metered browser charge.
 
 ## Schedule
 
-GitHub Actions runs this workflow every 30 minutes (UTC) and also supports manual runs from the Actions tab:
-`.github/workflows/typeiran-attendance.yml`
+GitHub Actions attempts one run every 30 minutes (UTC). GitHub may delay scheduled runs, so this is not an exact real-time timer. Manual runs are available from the Actions tab.
 
-## Required GitHub secret
+## One-time TypeIran login setup
 
-In the repository, open **Settings → Secrets and variables → Actions → New repository secret** and add:
+The browser session is stored as a GitHub Actions secret. To create it:
 
-- Name: `TINYFISH_API_KEY`
-- Secret: a newly generated TinyFish API key
+1. Install Node.js 22 on a Windows computer.
+2. Download this repository ZIP from GitHub and extract it.
+3. Open CMD in the extracted folder.
+4. Run:
+   `npm install`
+   `npx playwright install chromium`
+   `npm run auth:setup`
+5. A browser opens. Sign in to TypeIran yourself. Do not share your password or one-time codes.
+6. Return to CMD and press Enter. The setup creates `typeiran-storage-state-b64.txt`.
+7. In GitHub, open this repository → Settings → Secrets and variables → Actions → New repository secret.
+8. Name it `TYPEIRAN_STORAGE_STATE_B64`. Paste the complete contents of `typeiran-storage-state-b64.txt` as its value.
+9. Under Settings → Secrets and variables → Actions → Variables, create:
+   - Name: `TYPEIRAN_AUTOMATION_ENABLED`
+   - Value: `true`
 
-Never commit the key to this repository or send it in chat. If an earlier key was pasted into a chat, revoke it and use a replacement.
+The state files contain login session credentials. Never commit them, upload them as ordinary repository files, or send them in chat. Delete the local copies after adding the secret. When TypeIran expires the session, repeat the login setup and replace the secret.
 
-Also add this repository Actions variable under **Settings → Secrets and variables → Actions → Variables**:\n\n- Name: `TYPEIRAN_AUTOMATION_ENABLED`\n- Value: `true`\n\nThe workflow intentionally skips all runs until this variable is set to `true`, preventing unexpected metered TinyFish usage. The workflow uses browser profile `prof_9a2ee95796624b37`. That profile must remain authenticated to TypeIran.
-
-## Exact safety rules
+## Safety rules
 
 - Inspect the worker page first.
-- Click exactly one visible, enabled element with exact `aria-label="اعلام حضور"`, if present.
-- Only if that target is absent, inspect the online page and click exactly one visible, enabled button with exact accessible name `دریافت نوبت`.
+- If exactly one visible, enabled element has exact `aria-label="اعلام حضور"`, click it once.
+- Only if that element is absent, inspect the online page and click exactly one visible, enabled button with exact accessible name `دریافت نوبت`.
 - Never click, focus, hover, or otherwise interact with `حذف نوبت` or `بررسی نوبت`.
 - Never accept, reject, close, or dismiss dialogs, modals, or popups.
-- Stop without clicking when authentication is invalid, targets are ambiguous, or state is unclear.
-- No fuzzy matching, coordinates, or fallback selectors.
+- Stop on login-required, ambiguous, duplicate, disabled, or unclear states.
+- No fuzzy matching or coordinate-based clicks.
 
-## Cost and reliability
+## Cost
 
-GitHub-hosted standard runner usage is free for public repositories. TinyFish browser automation is a separate metered service and may consume TinyFish wallet credits or incur charges. Therefore, GitHub scheduling can be free, but total end-to-end operation is not guaranteed to be free unless the TinyFish account has a free allowance or credits.
-
-GitHub scheduled events are not guaranteed to start at the exact minute and may be delayed during periods of high load. A successful workflow run alone does not prove that TypeIran action occurred; inspect its log outcome.
+GitHub standard hosted runners are free for public repositories. TinyFish and Render are not used by this Playwright workflow. This relies on GitHub's free public-repository Actions offering and remains subject to GitHub's policies and scheduling delays.
